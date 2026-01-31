@@ -3,8 +3,9 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-DB_PATH = Path("database/roverjobpulse.db")
+DB_PATH = Path("../database/roverjobpulse.db")
 
 
 def load_data():
@@ -12,18 +13,29 @@ def load_data():
     df = pd.read_sql("SELECT * FROM jobs", conn)
     conn.close()
 
-    # Convert dates
     df["date_posted"] = pd.to_datetime(df["date_posted"], errors="coerce")
     df["date_scraped"] = pd.to_datetime(df["date_scraped"], errors="coerce")
 
     return df
 
 
-def main():
-    st.set_page_config(page_title="RoverJobPulse", layout="wide")
+def filter_by_days(df, days):
+    if days == "All":
+        return df
 
-    st.title("RoverJobPulse — Python Job Market Monitor")
-    st.caption("Automated tracking of Python job listings (RemoteOK)")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    return df[df["date_scraped"] >= cutoff]
+
+
+def main():
+    st.set_page_config(
+        page_title="RoverJobPulse",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+    st.title("📡 RoverJobPulse")
+    st.caption("Automated Python job market monitoring (RemoteOK)")
 
     df = load_data()
 
@@ -31,47 +43,76 @@ def main():
         st.warning("No job data available yet. Run the scraper first.")
         return
 
-    # ---- Metrics ----
-    total_jobs = len(df)
-    jobs_today = df[
-        df["date_scraped"].dt.date == pd.Timestamp.utcnow().date()
-    ].shape[0]
+    # -------- Sidebar --------
+    st.sidebar.header("🔎 Filters")
 
-    col1, col2 = st.columns(2)
-    col1.metric("Total Jobs Collected", total_jobs)
-    col2.metric("Jobs Collected Today", jobs_today)
+    period = st.sidebar.radio(
+        "Time range",
+        options=["Last 7 days", "Last 14 days", "Last 30 days", "All time"],
+        index=0
+    )
+
+    period_map = {
+        "Last 7 days": 7,
+        "Last 14 days": 14,
+        "Last 30 days": 30,
+        "All time": "All"
+    }
+
+    df_filtered = filter_by_days(df, period_map[period])
+
+    search = st.sidebar.text_input("Search title or company")
+
+    if search:
+        df_filtered = df_filtered[
+            df_filtered["title"].str.contains(search, case=False, na=False)
+            | df_filtered["company"].str.contains(search, case=False, na=False)
+        ]
+
+    # -------- Metrics --------
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Jobs Collected", len(df))
+    col2.metric("Jobs in Selected Period", len(df_filtered))
+
+    latest_scrape = df["date_scraped"].max()
+    col3.metric(
+        "Last Scrape",
+        latest_scrape.strftime("%Y-%m-%d %H:%M UTC")
+    )
 
     st.divider()
 
-    # ---- Jobs over time ----
-    st.subheader("Jobs Collected Over Time")
-    jobs_by_day = (
-        df.groupby(df["date_scraped"].dt.date)
+    # -------- Trend --------
+    st.subheader("📈 Job Collection Trend")
+
+    trend = (
+        df_filtered
+        .groupby(df_filtered["date_scraped"].dt.date)
         .size()
         .reset_index(name="count")
     )
 
-    st.line_chart(jobs_by_day.set_index("date_scraped")["count"])
+    st.line_chart(
+        trend.set_index("date_scraped")["count"]
+    )
 
-    # ---- Top companies ----
-    st.subheader("Top Hiring Companies")
-    top_companies = df["company"].value_counts().head(10)
+    # -------- Top companies --------
+    st.subheader("🏢 Top Hiring Companies")
+
+    top_companies = (
+        df_filtered["company"]
+        .value_counts()
+        .head(10)
+    )
+
     st.bar_chart(top_companies)
 
-    # ---- Job listings ----
-    st.subheader("Job Listings")
-    search = st.text_input("Search by title or company")
-
-    if search:
-        filtered_df = df[
-            df["title"].str.contains(search, case=False, na=False)
-            | df["company"].str.contains(search, case=False, na=False)
-        ]
-    else:
-        filtered_df = df
+    # -------- Job table --------
+    st.subheader("📋 Job Listings")
 
     st.dataframe(
-        filtered_df[
+        df_filtered[
             [
                 "title",
                 "company",
@@ -80,8 +121,9 @@ def main():
                 "date_posted",
                 "job_url",
             ]
-        ],
-        use_container_width=True,
+        ].sort_values("date_posted", ascending=False),
+        width="stretch",
+        hide_index=True
     )
 
 
