@@ -1,5 +1,6 @@
 
 import requests
+from datetime import datetime, timezone
 from scraper.base import BaseScraper
 
 
@@ -17,12 +18,23 @@ class RemoteOKScraper(BaseScraper):
         data = response.json()
         jobs = []
 
-        # First item is metadata, skip it
+        # First item is metadata
         for item in data[1:]:
-            # Only Python-related jobs
             tags = item.get("tags", [])
             if "python" not in [t.lower() for t in tags]:
                 continue
+
+            # Handle job post date safely
+            date_posted = None
+
+            if item.get("date"):
+                # ISO format
+                date_posted = item["date"]
+            elif item.get("epoch"):
+                # Unix timestamp
+                date_posted = datetime.fromtimestamp(
+                    item["epoch"], tz=timezone.utc
+                ).isoformat()
 
             jobs.append({
                 "title": item.get("position"),
@@ -30,7 +42,8 @@ class RemoteOKScraper(BaseScraper):
                 "location": item.get("location"),
                 "tags": ", ".join(tags),
                 "job_url": item.get("url"),
-                "source": self.source_name
+                "source": self.source_name,
+                "date_posted": date_posted
             })
 
         return jobs
