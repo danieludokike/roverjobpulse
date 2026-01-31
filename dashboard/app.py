@@ -5,9 +5,11 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
+# ---- Database path ----
 DB_PATH = Path("../database/roverjobpulse.db")
 
 
+# ---- Load data ----
 def load_data():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("SELECT * FROM jobs", conn)
@@ -19,14 +21,16 @@ def load_data():
     return df
 
 
+# ---- Filter helpers ----
 def filter_by_days(df, days):
-    if days == "All":
+    if days == "ALL":
         return df
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     return df[df["date_scraped"] >= cutoff]
 
 
+# ---- App ----
 def main():
     st.set_page_config(
         page_title="RoverJobPulse",
@@ -43,12 +47,14 @@ def main():
         st.warning("No job data available yet. Run the scraper first.")
         return
 
-    # -------- Sidebar --------
+    # ======================
+    # Sidebar Filters
+    # ======================
     st.sidebar.header("🔎 Filters")
 
-    period = st.sidebar.radio(
+    period_label = st.sidebar.radio(
         "Time range",
-        options=["Last 7 days", "Last 14 days", "Last 30 days", "All time"],
+        ["Last 7 days", "Last 14 days", "Last 30 days", "All time"],
         index=0
     )
 
@@ -56,10 +62,10 @@ def main():
         "Last 7 days": 7,
         "Last 14 days": 14,
         "Last 30 days": 30,
-        "All time": "All"
+        "All time": "ALL"
     }
 
-    df_filtered = filter_by_days(df, period_map[period])
+    df_filtered = filter_by_days(df, period_map[period_label])
 
     search = st.sidebar.text_input("Search title or company")
 
@@ -69,21 +75,25 @@ def main():
             | df_filtered["company"].str.contains(search, case=False, na=False)
         ]
 
-    # -------- Metrics --------
+    # ======================
+    # Metrics
+    # ======================
     col1, col2, col3 = st.columns(3)
 
     col1.metric("Total Jobs Collected", len(df))
     col2.metric("Jobs in Selected Period", len(df_filtered))
 
-    latest_scrape = df["date_scraped"].max()
+    last_scrape = df["date_scraped"].max()
     col3.metric(
         "Last Scrape",
-        latest_scrape.strftime("%Y-%m-%d %H:%M UTC")
+        last_scrape.strftime("%Y-%m-%d %H:%M UTC")
     )
 
     st.divider()
 
-    # -------- Trend --------
+    # ======================
+    # Trend Chart
+    # ======================
     st.subheader("📈 Job Collection Trend")
 
     trend = (
@@ -93,38 +103,48 @@ def main():
         .reset_index(name="count")
     )
 
-    st.line_chart(
-        trend.set_index("date_scraped")["count"]
-    )
+    if trend.empty:
+        st.info("No job data available for the selected time range.")
+    else:
+        st.line_chart(
+            trend.set_index("date_scraped")["count"]
+        )
 
-    # -------- Top companies --------
+    # ======================
+    # Top Companies
+    # ======================
     st.subheader("🏢 Top Hiring Companies")
 
-    top_companies = (
-        df_filtered["company"]
-        .value_counts()
-        .head(10)
-    )
+    top_companies = df_filtered["company"].value_counts().head(10)
 
-    st.bar_chart(top_companies)
+    if top_companies.empty:
+        st.info("No company data available for the selected time range.")
+    else:
+        st.bar_chart(top_companies)
 
-    # -------- Job table --------
+    # ======================
+    # Job Listings Table
+    # ======================
     st.subheader("📋 Job Listings")
 
-    st.dataframe(
-        df_filtered[
-            [
-                "title",
-                "company",
-                "location",
-                "tags",
-                "date_posted",
-                "job_url",
+    if df_filtered.empty:
+        st.warning("No jobs found for the selected filters.")
+    else:
+        st.dataframe(
+            df_filtered[
+                [
+                    "title",
+                    "company",
+                    "location",
+                    "tags",
+                    "date_posted",
+                    "job_url",
+                ]
             ]
-        ].sort_values("date_posted", ascending=False),
-        width="stretch",
-        hide_index=True
-    )
+            .sort_values("date_posted", ascending=False),
+            width="stretch",
+            hide_index=True
+        )
 
 
 if __name__ == "__main__":
